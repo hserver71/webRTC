@@ -1,0 +1,29 @@
+{
+  "name": "rtp",
+  "version": "1.0.0",
+  "description": "RTP to WebRTC streaming server",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "stream": "./stream-video.sh",
+    "stream-loop": "./stream-video-loop.sh",
+    "build-client": "node build-client.js",
+    "setup": "npm install && npm run build-client"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.1.0",
+    "mediasoup": "^3.15.8",
+    "mediasoup-client": "^3.7.3",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.7",
+    "@babel/preset-env": "^7.24.7",
+    "babelify": "^10.0.0",
+    "browserify": "^17.0.0"
+  }
+}
+

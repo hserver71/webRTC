@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>RTP to WebRTC Stream</title>
+	<style>
+		body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
+		#video { width: 100%; max-width: 1280px; background: #000; border: 2px solid #333; }
+		#log { background: #2a2a2a; padding: 10px; height: 200px; overflow-y: auto; font-size: 12px; font-family: monospace; border: 1px solid #333; }
+		button { padding: 10px 20px; margin: 10px 5px; background: #4CAF50; color: white; border: none; cursor: pointer; border-radius: 4px; }
+		button:hover { background: #45a049; }
+	</style>
+</head>
+<body>
+	<h1>RTP to WebRTC Stream</h1>
+	<video id="video" autoplay playsinline></video>
+	<div>
+		<button onclick="connect()">Connect</button>
+		<button onclick="consume()">Request Stream</button>
+	</div>
+	<div id="log"></div>
+	<script src="/mediasoup-client.min.js"></script>
+	<script>
+		const mediasoupClient = window.mediasoup;
+		let ws, device, transport, consumer;
+		const video = document.getElementById('video');
+		const logDiv = document.getElementById('log');
+
+		function log(msg) {
+			const p = document.createElement('div');
+			p.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+			logDiv.appendChild(p);
+			logDiv.scrollTop = logDiv.scrollHeight;
+			console.log(msg);
+		}
+
+		let pendingConnectCallback = null;
+
+		async function connect() {
+			ws = new WebSocket(`ws://${window.location.host}`);
+			ws.onopen = () => {
+				log('Connected');
+				ws.send(JSON.stringify({ action: 'join', roomId: 'default' }));
+			};
+			ws.addEventListener('message', async (e) => {
+				const data = JSON.parse(e.data);
+				log(`Received: ${data.action}`);
+				if (data.action === 'transport-created') {
+					device = new mediasoupClient.Device();
+					await device.load({ routerRtpCapabilities: (await getRtpCapabilities()).rtpCapabilities });
+					transport = device.createRecvTransport({
+						id: data.transportId,
+						iceParameters: data.iceParameters,
+						iceCandidates: data.iceCandidates,
+						dtlsParameters: data.dtlsParameters
+					});
+					transport.on('connect', ({ dtlsParameters }, callback) => {
+						log('Transport connecting...');
+						pendingConnectCallback = callback;
+						ws.send(JSON.stringify({ action: 'connect-transport', dtlsParameters }));
+					});
+					log('Transport ready');
+				} else if (data.action === 'transport-connected') {
+					if (pendingConnectCallback) {
+						pendingConnectCallback();
+						pendingConnectCallback = null;
+						log('Transport connected');
+					}
+				} else if (data.action === 'consumer-created') {
+					try {
+						log('Creating consumer...');
+						consumer = await transport.consume({
+							id: data.id,
+							producerId: data.producerId,
+							kind: data.kind,
+							rtpParameters: data.rtpParameters
+						});
+						if (!consumer.track) {
+							log('ERROR: Consumer has no track!');
+							return;
+						}
+						log(`Track: ${consumer.track.kind}, enabled: ${consumer.track.enabled}, readyState: ${consumer.track.readyState}`);
+						consumer.track.enabled = true;
+						consumer.track.onmute = () => log('Track muted');
+						consumer.track.onunmute = () => log('Track unmuted');
+						consumer.track.onended = () => log('Track ended');
+						log(`Consumer: paused=${consumer.paused}, closed=${consumer.closed}`);
+						const stream = new MediaStream([consumer.track]);
+						log(`Stream tracks: ${stream.getTracks().length}`);
+						video.srcObject = stream;
+						log(`Video element readyState: ${video.readyState}`);
+						video.play().then(() => {
+							log('Video playing');
+						}).catch(err => {
+							log(`Play error: ${err.message}`);
+						});
+						video.onloadedmetadata = () => {
+							log(`Video loaded: ${video.videoWidth}x${video.videoHeight}`);
+						};
+						video.onplay = () => {
+							log('Video started playing');
+						};
+						video.onerror = (e) => {
+							log(`Video error: ${e.message || 'unknown'}`);
+						};
+						setTimeout(() => {
+							log(`Video state: paused=${video.paused}, ended=${video.ended}, currentTime=${video.currentTime}, readyState=${video.readyState}`);
+							log(`Stream tracks: ${video.srcObject ? video.srcObject.getTracks().length : 0}`);
+							if (video.srcObject) {
+								video.srcObject.getTracks().forEach((track, i) => {
+									log(`Track ${i}: kind=${track.kind}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+								});
+							}
+							if (video.paused) {
+								log('Video is paused, trying to play...');
+								video.play().catch(e => log(`Retry play error: ${e.message}`));
+							}
+						}, 2000);
+						log('Stream started');
+						ws.send(JSON.stringify({ action: 'resume-consumer' }));
+					} catch (err) {
+						log(`Error: ${err.message}`);
+						console.error(err);
+					}
+				} else if (data.action === 'error') {
+					log(`Error: ${data.message}`);
+				}
+			});
+		}
+
+		async function getRtpCapabilities() {
+			return new Promise((resolve) => {
+				const handler = (e) => {
+					const data = JSON.parse(e.data);
+					if (data.action === 'rtp-capabilities') {
+						ws.removeEventListener('message', handler);
+						resolve(data);
+					}
+				};
+				ws.addEventListener('message', handler);
+				ws.send(JSON.stringify({ action: 'get-rtp-capabilities' }));
+			});
+		}
+
+		function consume() {
+			if (!device) {
+				log('Device not ready. Connect first.');
+				return;
+			}
+			if (!ws || ws.readyState !== WebSocket.OPEN) {
+				log('WebSocket not connected');
+				return;
+			}
+			log('Requesting stream...');
+			const msg = { action: 'consume', rtpCapabilities: device.rtpCapabilities };
+			console.log('Sending consume request:', msg);
+			ws.send(JSON.stringify(msg));
+		}
+	</script>
+</body>
+</html>
+
