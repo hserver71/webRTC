@@ -44,11 +44,25 @@ async function createRtpReceiver(roomId, options = {}) {
 
 	rtpSocket.on('message', async (packet) => {
 		packetCount++;
-		if (!ssrc && packet.length >= 12) {
+		if (!ssrc && packet.length >= 12) { // First packet contains SSRC, SSRC is the 4 bytes string that identifies the stream 
 			ssrc = packet.readUInt32BE(8);
 			console.log(`SSRC detected: ${ssrc}`);
-			const codecParams = codec === 'H264' ? { mimeType: 'video/H264', payloadType, clockRate, parameters: { 'packetization-mode': 1, 'profile-level-id': '42e01f' } } : { mimeType: `video/${codec}`, payloadType, clockRate };
-			producer = await transport.produce({ kind, rtpParameters: { codecs: [codecParams], headerExtensions: [], encodings: [{ ssrc }], rtcp: { cname: `rtp-${ssrc}` } } });
+			const codecParams = 
+				codec === 'H264' ? 
+				{ mimeType: 'video/H264', payloadType, clockRate, parameters: { 'packetization-mode': 1, 'profile-level-id': '42e01f' } } : 
+				{ mimeType: `video/${codec}`, payloadType, clockRate };
+			producer = await transport.produce(
+				{ 
+					kind, 
+					rtpParameters: { 
+						codecs: [codecParams], 
+						headerExtensions: [], 
+						encodings: [{ ssrc }], 
+						rtcp: { cname: `rtp-${ssrc}` } 
+					} 
+				}
+			);
+			
 			room.producers.set(producer.id, producer);
 			room.producers.set(ssrc, producer);
 			if (producer.paused) await producer.resume();
